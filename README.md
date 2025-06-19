@@ -85,6 +85,22 @@ Importe o workflow: workflows/adverse-events-workflow.json
 3. Configure as mesmas credenciais (HTTP e Supabase)
 4. Use a URL pública do webhook fornecida pelo n8n Cloud para testar o fluxo
 
+6. Use este conteúdo para criar a tabela no Supabase:
+
+```
+CREATE TABLE adverse_events (
+  id serial PRIMARY KEY,
+  eventId text,
+  eventText text,
+  date timestamp,
+  seriousness text,
+  severity text,
+  subjectReference text,
+  gender text,
+  birthDate date
+);
+```
+
 ### Exemplo de Saída Final
 ```
 {
