@@ -1,0 +1,302 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "adverse-events-to-supabase",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -280,
+        20
+      ],
+      "id": "c8905be7-d483-4158-9b4e-bb8628fabbd1",
+      "name": "Webhook",
+      "webhookId": "0d4e2e81-2de1-432b-acd1-c18c8c93adfe"
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1760,
+        -60
+      ],
+      "id": "fc45a69b-1441-4572-b7dd-9e0254cfc8b0",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "mode": "combineBySql",
+        "query": "SELECT\n  input1.*,\n  input2.birthDate,\n  input2.gender,\n  input2.resourceType\nFROM input1\nJOIN input2\nON input1.subjectReference = input2.resourceType || '/' || input2.id\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1100,
+        -60
+      ],
+      "id": "6c04327d-882d-4db1-ba34-f5840a79e1ca",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "url": "=https://hapi.fhir.org/baseR4/AdverseEvent?_count={{ $json.body.count }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/fhir+json"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/fhir+json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        40,
+        20
+      ],
+      "id": "eb7eb0fd-12b8-4431-a1df-999bf5c61e3e",
+      "name": "GET do AdverseEvents"
+    },
+    {
+      "parameters": {
+        "jsCode": "const bundle = items[0].json;\n\nif (!Array.isArray(bundle.entry)) {\n  return [{ json: { error: \"Sem entradas no bundle\" } }];\n}\n\nconst referenceMap = {}; // Ex: { Patient: Set(), Practitioner: Set() }\n\nbundle.entry.forEach(e => {\n  const subjectRef = e.resource?.subject?.reference;\n  if (subjectRef && typeof subjectRef === 'string') {\n    const [type, id] = subjectRef.split('/');\n    if (type && id) {\n      if (!referenceMap[type]) {\n        referenceMap[type] = new Set();\n      }\n      referenceMap[type].add(id);\n    }\n  }\n});\n\n// Converte os Sets para arrays\nconst output = Object.entries(referenceMap).map(([resourceType, idSet]) => {\n  return {\n    json: {\n      resourceType,\n      ids: Array.from(idSet),\n      requestUrl: `https://hapi.fhir.org/baseR4/${resourceType}?_id=${Array.from(idSet).join(',')}`\n    }\n  };\n});\n\nreturn output;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        120
+      ],
+      "id": "d5d6d675-729c-416d-95b6-f4e079b15aa0",
+      "name": "Puxa IDs dos subjects"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Supondo que o item original seja um bundle com entry[] (vindo do HTTP Request)\nconst bundle = items[0].json; // Pega o único item (o bundle)\n\nif (!bundle.entry || !Array.isArray(bundle.entry)) {\n  return [{ json: { error: \"Sem entradas (entry[]) no bundle\" } }];\n}\n\n// Mapeia cada entry em um novo item\nreturn bundle.entry.map(e => {\n  const r = e.resource || {};\n\n  return {\n    json: {\n      eventId: r.id || null,\n      eventText: Array.isArray(r.event?.coding) && r.event.coding.length > 0\n        ? r.event.coding[0].display || null\n        : null,\n      date: r.date || null,\n      seriousness: Array.isArray(r.seriousness?.coding)\n        ? r.seriousness.coding.map(c => c.code).join(\", \")\n        : null,\n      severity: Array.isArray(r.severity?.coding)\n        ? r.severity.coding.map(c => c.code).join(\", \")\n        : null,\n      subjectReference: r.subject?.reference || null,\n      medicationReference: r.suspectEntity?.[0]?.instance?.reference || null\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        580,
+        -220
+      ],
+      "id": "1540f901-adca-45e4-af49-4f69c3932409",
+      "name": "Puxa os dados do EventAdverse"
+    },
+    {
+      "parameters": {
+        "url": "=https://hapi.fhir.org/baseR4/{{$json.resourceType}}?_id={{ $json.ids }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        120
+      ],
+      "id": "2bb9df72-1e8e-4819-9184-f132132a09a7",
+      "name": "Puxa as ID`s de pacientes"
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = [];\n\nfor (const item of items) {\n  const bundle = item.json;\n  if (!Array.isArray(bundle.entry)) continue;\n\n  for (const e of bundle.entry) {\n    const r = e.resource || {};\n    results.push({\n      json: {\n        resourceType: r.resourceType || null,\n        id: r.id || null,\n        birthDate: r.birthDate || null,\n        gender: r.gender || null\n      }\n    });\n  }\n}\n\nreturn results;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        120
+      ],
+      "id": "9b4a4c59-dfbf-4866-8830-c3d4a088d87e",
+      "name": "Pega genero e birthdate de cada paciente"
+    },
+    {
+      "parameters": {
+        "tableId": "adverseEventTable",
+        "dataToSend": "autoMapInputData"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1380,
+        -60
+      ],
+      "id": "7567f720-03a5-4417-aa01-b981833a0dde",
+      "name": "Supabase",
+      "credentials": {
+        "supabaseApi": {
+          "id": "46yD9A4qx07lth6S",
+          "name": "Supabase account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "delavega-n8n-8a5958a9e88c.herokuapp.com",
+            "connection": "close",
+            "user-agent": "PostmanRuntime/7.44.1",
+            "accept": "*/*",
+            "postman-token": "d439a847-c195-47bb-9d97-38d80c546276",
+            "accept-encoding": "gzip, deflate, br",
+            "x-request-id": "a9e0d452-32c1-4b64-8096-38eb5bd57821",
+            "x-forwarded-for": "179.214.115.39",
+            "x-forwarded-proto": "https",
+            "x-forwarded-port": "443",
+            "via": "1.1 vegur",
+            "connect-time": "0",
+            "x-request-start": "1750268104676",
+            "total-route-time": "0",
+            "content-length": "0"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "count": 100
+          },
+          "webhookUrl": "https://delavega-n8n-8a5958a9e88c.herokuapp.com/webhook/0d4e2e81-2de1-432b-acd1-c18c8c93adfe",
+          "executionMode": "production"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "GET do AdverseEvents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET do AdverseEvents": {
+      "main": [
+        [
+          {
+            "node": "Puxa IDs dos subjects",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Puxa os dados do EventAdverse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Puxa IDs dos subjects": {
+      "main": [
+        [
+          {
+            "node": "Puxa as ID`s de pacientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Puxa os dados do EventAdverse": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Puxa as ID`s de pacientes": {
+      "main": [
+        [
+          {
+            "node": "Pega genero e birthdate de cada paciente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pega genero e birthdate de cada paciente": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Supabase": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "2b539d3b-1725-45d6-a7b5-6e3d11779607",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "98056f549da1017649ae627c043fc3279b4f6ff70c399e3bcac33de649c10dbd"
+  },
+  "id": "lZ1JWKqSkKqCaa8d",
+  "tags": []
+}
